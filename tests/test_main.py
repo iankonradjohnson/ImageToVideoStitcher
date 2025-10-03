@@ -57,6 +57,22 @@ class TestVideoProcessor(unittest.TestCase):
         # Then
         self.then_output_is_stitched_video_file(output_path, folder)
     
+    @patch('requests.get')
+    def test_processes_multiple_images_in_parallel(self, mock_get):
+        # Given
+        self.given_mock_video_downloads_with_delays(mock_get, [0.5, 0.5, 0.5])
+        processor = self.given_video_processor_with_stitcher()
+        folder = self.given_a_folder_with_three_images()
+        
+        # When
+        import time
+        start_time = time.time()
+        output_path = self.when_processing_folder(processor, folder, "Test prompt")
+        elapsed_time = time.time() - start_time
+        
+        # Then
+        self.then_processing_took_less_than_sequential_time(elapsed_time, 1.5)
+    
     def given_video_processor_with_mock_client(self):
         from src.video_processor import VideoProcessor
         from src.video_generator import VideoGenerator
@@ -185,6 +201,43 @@ class TestVideoProcessor(unittest.TestCase):
             self.assertIn(expected_message, captured_output.getvalue())
         finally:
             sys.stdout = sys.__stdout__
+
+
+    def given_mock_video_downloads_with_delays(self, mock_get, delays):
+        # Create mock responses that simulate delay
+        import time
+        mock_responses = []
+        
+        def make_delayed_response(delay, video_data):
+            mock_response = Mock()
+            mock_response.raise_for_status = Mock()
+            
+            # Store original data
+            original_data = video_data
+            
+            # Override content property to add delay
+            def get_content():
+                time.sleep(delay)
+                return original_data
+            
+            type(mock_response).content = property(lambda self: get_content())
+            return mock_response
+        
+        for i, delay in enumerate(delays):
+            video_data = self._create_minimal_mp4(duration=1)
+            mock_responses.append(make_delayed_response(delay, video_data))
+            
+        mock_get.side_effect = mock_responses
+    
+    def given_a_folder_with_three_images(self):
+        jpeg_header = b'\xff\xd8\xff\xe0\x00\x10JFIF'
+        for i in range(3):
+            Path(self.temp_dir, f'photo{i+1}.jpg').write_bytes(jpeg_header)
+        return self.temp_dir
+    
+    def then_processing_took_less_than_sequential_time(self, elapsed_time, sequential_time):
+        # Allow some overhead, but should be significantly less than sequential
+        self.assertLess(elapsed_time, sequential_time * 0.7)
 
 
 if __name__ == '__main__':

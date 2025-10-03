@@ -1,4 +1,6 @@
 from pathlib import Path
+import concurrent.futures
+from typing import List, Tuple
 
 
 class VideoProcessor:
@@ -28,9 +30,33 @@ class VideoProcessor:
         
         # Process multiple images
         if len(image_files) > 1 and self.video_stitcher:
-            video_paths = []
-            for i, image_file in enumerate(sorted(image_files)):
+            # Sort files for consistent ordering
+            sorted_files = sorted(image_files)
+            
+            # Process images in parallel
+            def process_image(args: Tuple[int, Path]) -> Tuple[int, bytes]:
+                i, image_file = args
+                print(f"Processing image {i+1}/{len(sorted_files)}: {image_file.name}")
                 video_bytes = self.video_generator.generate_video_from_image(str(image_file), prompt)
+                return i, video_bytes
+            
+            # Use ThreadPoolExecutor for I/O bound tasks
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(sorted_files)) as executor:
+                # Submit all tasks
+                future_to_index = {
+                    executor.submit(process_image, (i, img)): i 
+                    for i, img in enumerate(sorted_files)
+                }
+                
+                # Collect results in order
+                video_data = [None] * len(sorted_files)
+                for future in concurrent.futures.as_completed(future_to_index):
+                    i, video_bytes = future.result()
+                    video_data[i] = video_bytes
+            
+            # Write videos to temp files
+            video_paths = []
+            for i, video_bytes in enumerate(video_data):
                 temp_video_path = Path(folder_path) / f"temp_video_{i}.mp4"
                 temp_video_path.write_bytes(video_bytes)
                 video_paths.append(str(temp_video_path))
